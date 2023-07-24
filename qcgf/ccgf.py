@@ -42,31 +42,31 @@ def _rhs_2_ip(t1, t2, orb_idx=0):
     assert r2.shape == (nocc, nocc, nvir)
     return r2
 
-def _rhs_ip(t1, t2, l1, l2, orb_idx=0):
+def _rhs_ip(amp, lam, orb_idx=0):
     '''
-    Make the right hand side for orb_idx of the CCGF-IP equations
+    Make the right hand side for orb_idx of the 
+    IP part of the CCSD-GF equation.
 
     Input:
-        t1 : numpy.ndarray
-            T1 amplitudes
-        t2 : numpy.ndarray
-            T2 amplitudes
-        l1 : numpy.ndarray
-            L1 (not used)
-        l2 : numpy.ndarray
-            L2 (not used)
+        amp : tuple
+            T1 and T2 amplitudes
+        lam : tuple
+            L1 and L2 Lagrange multipliers (not used)
         orb_idx: int
 
     Returns:
         rhs_1 : numpy.ndarray
-            right hand side
+            right hand side corresponding to single IP
+            excitation, the shape is (nocc, )
         rhs_2 : numpy.ndarray
-            right hand side
+            right hand side corresponding to double IP
+            excitation, the shape is (nocc, nocc, nvir)
     '''
 
-    p    = orb_idx
-    nocc = t1.shape[0]
-    nvir = t1.shape[1]
+    p      = orb_idx
+    t1, t2 = amp
+    nocc   = t1.shape[0]
+    nvir   = t1.shape[1]
 
     rhs_1 = None
     rhs_2 = None
@@ -82,55 +82,52 @@ def _rhs_ip(t1, t2, l1, l2, orb_idx=0):
 
     else:
         a = p - nocc
-
         rhs_1 = t1[:, a]
         rhs_2 = t2[:, :, a, :]
 
     assert rhs_1 is not None
     assert rhs_2 is not None
-
     assert rhs_1.shape == (nocc, )
     assert rhs_2.shape == (nocc, nocc, nvir)
 
     return rhs_1, rhs_2
 
-def _lhs_ip(t1, t2, l1, l2, orb_idx=0):
+def _lag_ip(amp, lam, orb_idx=0):
     '''
-    Make the left hand side for orb_idx of the CCGF-IP equations
+    Make the right hand side for orb_idx of the CCGF-IP equations
 
     Input:
-        t1 : numpy.ndarray
-            T1 amplitudes
-        t2 : numpy.ndarray
-            T2 amplitudes
-        l1 : numpy.ndarray
-            L1
-        l2 : numpy.ndarray
-            L2
+        amp : tuple
+            T1 and T2 amplitudes
+        lam : tuple
+            L1 and L2 Lagrange multipliers (not used)
         orb_idx: int
 
     Returns:
-        lhs_1 : numpy.ndarray
-            left hand side
-        lhs_2 : numpy.ndarray
-            left hand side
+        rhs_1 : numpy.ndarray
+            right hand side
+        rhs_2 : numpy.ndarray
+            right hand side
     '''
 
-    p    = orb_idx
-    nocc = t1.shape[0]
-    nvir = t1.shape[1]
+    p      = orb_idx
+    t1, t2 = amp
+    l1, l2 = lam
+    nocc   = t1.shape[0]
+    nvir   = t1.shape[1]
 
-    lhs_1 = None
-    lhs_2 = None
+    lag_1 = None
+    lag_2 = None
 
     if p < nocc:
         i = p
-
-        lhs_1 = numpy.zeros((nocc, ), dtype=t1.dtype)
-        lhs_1[i] = -1.0
-        lhs_1   += numpy.einsum('ia,a->i',     l1, t1[i, :])
-        lhs_1   += numpy.einsum('ilcd,lcd->i', l2, t2[i, :, :, :]) * 2.0
-        lhs_1   -= numpy.einsum('ilcd,ldc->i', l2, t2[i, :, :, :])
+        
+        # Single part
+        lag_1 = numpy.zeros((nocc, ), dtype=t1.dtype)
+        lag_1[i] = -1.0
+        lag_1   += numpy.einsum('ia,a->i',     l1, t1[i, :])
+        lag_1   += numpy.einsum('ilcd,lcd->i', l2, t2[i, :, :, :]) * 2.0
+        lag_1   -= numpy.einsum('ilcd,ldc->i', l2, t2[i, :, :, :])
 
         r2 = numpy.zeros((nocc, nocc, nvir), dtype=t1.dtype)
         r2[i] = 1.0
@@ -148,8 +145,6 @@ def _lhs_ip(t1, t2, l1, l2, orb_idx=0):
     assert r2.shape == (nocc, nocc, nvir)
 
     return r1, r2
-
-
 
 def ccsd_gf_ip(cc_obj, omegas, t1=None, t2=None, l1=None, l2=None, eta=1e-4):
     '''

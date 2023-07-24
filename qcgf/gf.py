@@ -2,7 +2,7 @@ import pyscf
 from pyscf import lib
 from pyscf import __config__
 
-class GreenFunctionMixin(lib.StreamObject):
+class GreensFunctionMixin(lib.StreamObject):
     '''Green's function base class
 
     Attributes:
@@ -29,6 +29,7 @@ class GreenFunctionMixin(lib.StreamObject):
         mo_coeff
             Orbital coefficients
     '''
-    conv_tol = getattr(__config__, 'scf_hf_SCF_conv_tol', 1e-9)
+    conv_tol  = getattr(__config__, 'gf_conv_tol', 1e-6)
+    max_cycle = getattr(__config__, 'gf_max_cycle', 50)
 
-GF = GreenFunctionMixin
+GF = GreensFunctionMixin
