@@ -1,11 +1,12 @@
-import inspect
+import inspect, math
 import os, sys, typing
 from typing import List, Tuple, Callable
 
 import numpy, scipy
 
 import pyscf
-from pyscf import gto, scf, fci, lib
+from pyscf import gto, scf, ao2mo
+from pyscf import fci, lib
 
 from pyscf.fci import direct_spin1
 from pyscf.fci.direct_spin1 import _unpack
@@ -14,6 +15,59 @@ from pyscf.fci.direct_spin1 import contract_2e
 
 from qcgf.gf  import GreensFunctionMixin
 from qcgf.lib import gmres
+
+print_matrix = lambda x: print(numpy.array2string(x, precision=4, suppress_small=True))
+
+def ipfci_mo_slow(gf_obj, ps, qs, omega_list, broadening, np_max=1e5):
+    '''
+    Slow version of computing FCI IP Green's function in MO basis
+    Warning: this routine constructs FCI Hamiltonian matrix and only works for small active space
+    '''
+    mf = gf_obj._scf_obj
+    myfci = gf_obj._fci_obj
+    norb = len(mf.mo_energy)
+    nelec = mf.mol.nelec
+    neleca, nelecb = nelec
+    # 1e and 2e integrals in MO basis
+    h1e = mf.mo_coeff.T.dot(mf.get_hcore()).dot(mf.mo_coeff)
+    try:
+        eri = ao2mo.kernel(mf.mol, mf.mo_coeff)
+    except:
+        eri = ao2mo.kernel(mf._eri, mf.mo_coeff)
+    # FCI ground-state electronic energy
+    e_fci = myfci.energy(h1e, eri, myfci.ci, norb, nelec)
+
+    e_vector = list()
+    for q in qs:
+        e_vector.append(fci.addons.des_a(myfci.ci, norb, (neleca, nelecb), q).reshape(-1))
+    
+    gf._e_vector = numpy.asarray(e_vector)
+
+    gfvals = numpy.zeros((len(ps), len(qs), len(omega_list)), dtype=complex)
+    # explicitly construct FCI Hamiltonian for N-1 electron system
+    fci_size = math.comb(norb, neleca-1) * math.comb(norb, nelecb)
+    if fci_size > np_max:
+        raise RuntimeError('FCI Hamiltonian size too large for memory under 160G!')
+    H_fci = fci.direct_spin1.pspace(h1e, eri, norb, (neleca-1, nelecb), np=np_max)[1]
+
+    gf._H_fci = H_fci
+    
+    gf._H_fci_invs = []
+    for iomega in range(len(omega_list)):
+        curr_omega = omega_list[iomega]
+        H_fci_omega = H_fci + numpy.eye(H_fci.shape[0]) * (curr_omega - e_fci - 1j * broadening)
+        H_fci_inv = numpy.linalg.inv(H_fci_omega)
+        gf._H_fci_invs.append(H_fci_inv)
+        gf._b_vector = []
+        for ip, p in enumerate(ps):
+            b_vector = fci.addons.des_a(myfci.ci, norb, (neleca, nelecb), p).reshape(-1)
+            gf._b_vector.append(b_vector)
+            sol = numpy.dot(H_fci_inv, b_vector)
+            for iq, q in enumerate(qs):
+                gfvals[iq,ip,iomega] = numpy.dot(e_vector[iq], sol)
+    gf._b_vector = numpy.asarray(gf._b_vector)
+    return gfvals
+
 
 class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
     def __init__(self, scf_obj: scf.hf.SCF = None):
@@ -84,7 +138,7 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
 
         fci_ene, fci_vec = fci_obj.kernel(
             h1e=h1e, eri=h2e, norb=norb, nelec=nelec, 
-            ci0=None, ecore=h0, verbose=self.verbose
+            ci0=None, ecore=0.0, verbose=self.verbose
             )
         
         self._fci_obj     = fci_obj
@@ -227,34 +281,20 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
 
         h_ip  = fci.direct_spin1.pspace(h1e, h2e, norb, nelec_ip, hdiag=hdiag_ip, np=self.max_memory)[1]
         assert h_ip.shape == (size_ip, size_ip)
+        gf._h_ip = h_ip
 
         bps = numpy.asarray([fci.addons.des_a(vec_fci, norb, nelec, p).reshape(-1) for p in ps]).reshape(np, size_ip)
         eqs = numpy.asarray([fci.addons.des_a(vec_fci, norb, nelec, q).reshape(-1) for q in qs]).reshape(nq, size_ip)
+        gf._bps = bps
+        gf._eqs = eqs
+        gf._h_ip_omegas = []
 
         def gen_gfn(omega):
             h_ip_omega = h_ip + (omega - ene_fci - 1j * eta) * numpy.eye(size_ip)
-            return numpy.einsum("pI,qJ,IJ->pq", bps, eqs, numpy.linalg.inv(h_ip_omega))
+            gf._h_ip_omegas.append(numpy.linalg.inv(h_ip_omega))
+            return numpy.einsum("pI,qJ,JI->qp", bps, eqs, numpy.linalg.inv(h_ip_omega))
 
         gfns_ip = numpy.asarray([gen_gfn(omega) for omega in omegas]).reshape(nomega, np, nq)
-
-        broadening = eta; H_fci = h_ip; e_fci = ene_fci
-        e_vector   = [fci.addons.des_a(fci_obj.ci, norb, nelec, q).reshape(-1) for q in qs]
-
-        gfns_ip_ref = numpy.zeros((np, nq, nomega), dtype=numpy.complex128)
-        for iomega, omega in enumerate(omegas):
-            H_fci_inv = numpy.linalg.inv(H_fci + numpy.eye(H_fci.shape[0]) * (omega - e_fci - 1j * broadening))
-            for ip, p in enumerate(ps):
-                b_vector = fci.addons.des_a(fci_obj.ci, norb, nelec, p).reshape(-1)
-                sol = numpy.dot(H_fci_inv, b_vector)
-                for iq, q in enumerate(qs):
-                    gfns_ip_ref[iq,ip,iomega] = numpy.dot(e_vector[iq], sol)
-
-        for iomega, omega in enumerate(omegas):
-            for ip, p in enumerate(ps):
-                for iq, q in enumerate(qs):
-                    print(f"omega = {omega:6.4f}, p = {p:2d}, q = {q:2d}, gf_ip = {gfns_ip[iomega, ip, iq]: 6.4f}, gf_ip_ref = {gfns_ip_ref[iq, ip, iomega]: 6.4f}")
-
-        assert 1 == 2
         return gfns_ip
 
 FCIGF = DirectSpin1FullConfigurationInteraction
@@ -277,18 +317,13 @@ if __name__ == '__main__':
     omegas = numpy.linspace(-0.5, 0.5, 201)
     ps = numpy.arange(nmo)
     qs = numpy.arange(nmo)
-    gf_ip = gf.get_ip_slow(omegas, ps=ps, qs=qs, eta=eta)
+    gf_ip     = gf.get_ip_slow(omegas, ps=ps, qs=qs, eta=eta)
+    gf_ip_ref = ipfci_mo_slow(gf, ps, qs, omegas, eta)
 
-    import fcdmft
-    from fcdmft.solver import fcigf
-    print(fcdmft.__file__)
-    gf_ref = fcdmft.solver.fcigf.FCIGF(gf._fci_obj, gf._scf_obj, tol=1e-6)
+    for hinv1, hinv2 in zip(gf._h_ip_omegas, gf._H_fci_invs):
+        print(numpy.linalg.norm(hinv1 - hinv2))
+    assert 1 == 2
 
-    gf_ip_ref = gf_ref.ipfci_mo_slow(ps, qs, omegas, eta).conj()
-    gf_ea_ref = gf_ref.eafci_mo_slow(ps, qs, omegas, eta)
-
-    for iomega, omega in enumerate(omegas):
-        for ip, p in enumerate(ps):
-            for iq, q in enumerate(qs):
-                print(f"omega = {omega:6.4f}, p = {p:2d}, q = {q:2d}, gf_ip = {gf_ip[iomega, ip, iq]: 6.4f}, gf_ip_ref = {gf_ip_ref[iq, ip, iomega]: 6.4f}")
+    gf_ip_diff = numpy.linalg.norm(gf_ip - gf_ip_ref)
+    print(f"IP GF difference = {gf_ip_diff:6.4e}")
     
