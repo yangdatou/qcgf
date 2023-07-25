@@ -29,7 +29,9 @@ class GreensFunctionMixin(lib.StreamObject):
         mo_coeff
             Orbital coefficients
     '''
-    conv_tol  = getattr(__config__, 'gf_conv_tol', 1e-6)
-    max_cycle = getattr(__config__, 'gf_max_cycle', 50)
+    conv_tol   = getattr(__config__, 'gf_conv_tol', 1e-6)
+    max_cycle  = getattr(__config__, 'gf_max_cycle', 50)
+    max_memory = getattr(__config__, 'gf_max_memory', 2000)  # 2 GB
+    gmres_m    = getattr(__config__, 'gf_gmres_m', 30)
 
 GF = GreensFunctionMixin
