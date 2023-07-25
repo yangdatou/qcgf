@@ -124,7 +124,6 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
         
         kwargs = inspect.signature(fci_obj.kernel).parameters
 
-        h0     = kwargs.get('ecore').default
         h1e    = kwargs.get('h1e'  ).default
         h2e    = kwargs.get('eri'  ).default
 
@@ -227,7 +226,8 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
     def get_ip_slow(self, omegas: List[float], ps: (List[int]|None)=None, qs: (List[int]|None)=None, eta: float=0.0) -> numpy.ndarray:
         '''
         Slow version of computing FCI IP Green's function by constructing 
-        the full FCI Hamiltonian.
+        the full FCI Hamiltonian. Note that the ene_fci does not include
+        the nuclear repulsion energy.
 
         Parameters:
             ps : list of ints, optional
