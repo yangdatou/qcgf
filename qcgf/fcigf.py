@@ -16,61 +16,21 @@ from pyscf.fci.direct_spin1 import contract_2e
 from qcgf.gf  import GreensFunctionMixin
 from qcgf.lib import gmres
 
-print_matrix = lambda x: print(numpy.array2string(x, precision=4, suppress_small=True))
+from pyscf.tools.dump_mat import dump_rec
+print_matrix = lambda c, t=None, stdout=sys.stdout: ((print("\n" + t, file=stdout) if t is not None else 0), dump_rec(stdout, c))
 
-def ipfci_mo_slow(gf_obj, ps, qs, omega_list, broadening, np_max=1e5):
-    '''
-    Slow version of computing FCI IP Green's function in MO basis
-    Warning: this routine constructs FCI Hamiltonian matrix and only works for small active space
-    '''
-    mf = gf_obj._scf_obj
-    myfci = gf_obj._fci_obj
-    norb = len(mf.mo_energy)
-    nelec = mf.mol.nelec
-    neleca, nelecb = nelec
-    # 1e and 2e integrals in MO basis
-    h1e = mf.mo_coeff.T.dot(mf.get_hcore()).dot(mf.mo_coeff)
-    try:
-        eri = ao2mo.kernel(mf.mol, mf.mo_coeff)
-    except:
-        eri = ao2mo.kernel(mf._eri, mf.mo_coeff)
-    # FCI ground-state electronic energy
-    e_fci = myfci.energy(h1e, eri, myfci.ci, norb, nelec)
+class _DirectSpin1FullConfigurationInteraction(direct_spin1.FCISolver):
+    h1e = None
+    h2e = None
 
-    e_vector = list()
-    for q in qs:
-        e_vector.append(fci.addons.des_a(myfci.ci, norb, (neleca, nelecb), q).reshape(-1))
-    
-    gf._e_vector = numpy.asarray(e_vector)
+    norb  = None
+    nelec = None
 
-    gfvals = numpy.zeros((len(ps), len(qs), len(omega_list)), dtype=complex)
-    # explicitly construct FCI Hamiltonian for N-1 electron system
-    fci_size = math.comb(norb, neleca-1) * math.comb(norb, nelecb)
-    if fci_size > np_max:
-        raise RuntimeError('FCI Hamiltonian size too large for memory under 160G!')
-    H_fci = fci.direct_spin1.pspace(h1e, eri, norb, (neleca-1, nelecb), np=np_max)[1]
-
-    gf._H_fci = H_fci
-    
-    gf._H_fci_invs = []
-    for iomega in range(len(omega_list)):
-        curr_omega = omega_list[iomega]
-        H_fci_omega = H_fci + numpy.eye(H_fci.shape[0]) * (curr_omega - e_fci - 1j * broadening)
-        H_fci_inv = numpy.linalg.inv(H_fci_omega)
-        gf._H_fci_invs.append(H_fci_inv)
-        gf._b_vector = []
-        for ip, p in enumerate(ps):
-            b_vector = fci.addons.des_a(myfci.ci, norb, (neleca, nelecb), p).reshape(-1)
-            gf._b_vector.append(b_vector)
-            sol = numpy.dot(H_fci_inv, b_vector)
-            for iq, q in enumerate(qs):
-                gfvals[iq,ip,iomega] = numpy.dot(e_vector[iq], sol)
-    gf._b_vector = numpy.asarray(gf._b_vector)
-    return gfvals
-
+    fci_ene = None
+    fci_vec = None
 
 class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
-    def __init__(self, scf_obj: scf.hf.SCF = None):
+    def __init__(self, scf_obj: scf.hf.SCF = None, tol=1e-8, verbose=0) -> None:
         """
         Initialize the DirectSpin1FullConfigurationInteraction solver.
 
@@ -100,14 +60,16 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
         self.nelec = None
         self.norb  = None
 
+        self.conv_tol   = tol
+        self.verbose    = verbose
         self._mol_obj   = scf_obj.mol
-        self.verbose    = scf_obj.verbose
         self.stdout     = scf_obj.stdout
         self.max_memory = scf_obj.max_memory
 
     def build(self, coeff: numpy.ndarray = None) -> None:
         """
         Build and solve the FCI object.
+        Note: h0 will not be included.
 
         Parameters:
             coeff : 2D array of floats, optional
@@ -118,103 +80,128 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
         if coeff is None:
             coeff = self._scf_obj.mo_coeff
 
-        fci_obj  = fci.FCI(self._mol_obj, mo=coeff, singlet=False)
-        fci_obj.verbose = self.verbose
-        fci_obj.stdout  = self.stdout
+        from qcgf.utils import make_h1_and_h2
+        nelec, norb, h1e, h2e = make_h1_and_h2(self._mol_obj, coeff)
         
-        kwargs = inspect.signature(fci_obj.kernel).parameters
-
-        h1e    = kwargs.get('h1e'  ).default
-        h2e    = kwargs.get('eri'  ).default
-
-        norb   = kwargs.get('norb').default
-        norb2  = norb * (norb + 1) // 2
-        nelec  = kwargs.get('nelec').default
-
-        assert isinstance(h0, float)
-        assert h1e.shape == (norb, norb)
-        assert h2e.shape == (norb2, norb2)
-
+        fci_obj = _DirectSpin1FullConfigurationInteraction(self._mol_obj)
         fci_ene, fci_vec = fci_obj.kernel(
-            h1e=h1e, eri=h2e, norb=norb, nelec=nelec, 
+            h1e=h1e,  eri=h2e, norb=norb, nelec=nelec, 
             ci0=None, ecore=0.0, verbose=self.verbose
             )
-        
-        self._fci_obj     = fci_obj
-        self._fci_obj.h0  = h0
-        self._fci_obj.h1e = h1e
-        self._fci_obj.h2e = h2e
 
-        self._fci_obj.norb = norb
-        self._fci_obj.nelec = nelec
+        fci_obj.h1e = h1e
+        fci_obj.h2e = h2e
 
-        self._fci_obj.fci_ene = fci_ene
-        self._fci_obj.fci_vec = fci_vec
+        fci_obj.norb  = norb
+        fci_obj.nelec = nelec
 
-    def get_ip(self, p: int, q: int, omega: float, eta: float = None, is_mor: bool = False, omega_mor: List[float] = None) -> numpy.ndarray:
+        fci_obj.fci_ene = fci_ene
+        fci_obj.fci_vec = fci_vec
+
+        self._fci_obj = fci_obj
+
+    def get_ip(self, omegas: List[float], ps: (List[int]|None)=None, qs: (List[int]|None)=None, eta: float=0.0, 
+                     is_mor: bool=False, omegas_mor: (List[int]|None)=None) -> numpy.ndarray:
         '''
-        Compute FCI IP Green's function in MO basis, this is the fast routine without 
-        constructing the full FCI Hamiltonian.
+        Compute FCI IP Green's function in MO basis. This is the fast routine 
+        without constructing the full FCI Hamiltonian.
 
         Parameters:
-            p : int
-                Orbital index used for computing the Green's function.
-            q : int
-                Orbital index used for computing the Green's function.
-            omega : float
+            ps : list of ints, optional
+                Orbital indices used for computing the Green's function.
+                If not provided, all orbitals will be used.
+            qs : list of ints, optional
+                Orbital indices used for computing the Green's function.
+                If not provided, all orbitals will be used.
+            omegas : float
                 Frequency for which the Green's function is computed.
             eta : float, optional
                 Broadening factor for numerical stability.
-            is_mor : bool, optional
-                If True, use Model Order Reduction (MOR) technique.
-            omega_mor : list of floats, optional
-                List of frequencies used for MOR.
+            is_mor : bool
+                Whether to use the method of residue.
+            omega_mor : float, optional
+                The frequency used for the method of residue.
 
         Returns:
-            gfvals : 3D array of complex floats
+            gfns_ip : 3D array of complex floats, shape (nomega, np, nq)
                 The computed Green's function values.
         '''
         scf_obj = self._scf_obj
-        
-        if self._fci_obj is None:
+
+        if not isinstance(self._fci_obj, _DirectSpin1FullConfigurationInteraction):
             self.build()
         fci_obj = self._fci_obj
 
-        norb = fci_obj.norb
-        h1e  = fci_obj.h1e
-        h2e  = fci_obj.h2e
-
+        norb     = fci_obj.norb
         nelec    = fci_obj.nelec
         nelec_ip = (nelec[0] - 1, nelec[1])
-        nelec_ea = (nelec[0] + 1, nelec[1])
-        link_index_ip = _unpack(norb, nelec_ip, None, spin=None)
-        link_index_ea = _unpack(norb, nelec_ea, None, spin=None)
-        diag_ip = fci_obj.make_hdiag(h1e, h2e, norb, nelec_ip)
-        diag_ea = fci_obj.make_hdiag(h1e, h2e, norb, nelec_ea)
 
+        if ps is None:
+            ps = numpy.arange(norb)
+
+        if qs is None:
+            qs = numpy.arange(norb)
+
+        omegas = numpy.asarray(omegas)
+        nomega = len(omegas)
+        ps = numpy.asarray(ps)
+        qs = numpy.asarray(qs)
+        np = len(ps)
+        nq = len(qs)
+    
+        h1e     = fci_obj.h1e
+        h2e     = fci_obj.h2e
         ene_fci = fci_obj.fci_ene
         vec_fci = fci_obj.fci_vec
+        size    = vec_fci.size
 
-        gf_pq_omega = 0.0
+        link_index_ip = _unpack(norb, nelec_ip, None, spin=None)
+        size_ip  = link_index_ip[0].shape[0] * link_index_ip[1].shape[0]
+        hdiag_ip = fci_obj.make_hdiag(h1e, h2e, norb, nelec_ip)
+        assert hdiag_ip.shape == (size_ip, )
+
+        bps = numpy.asarray([fci.addons.des_a(vec_fci, norb, nelec, p).reshape(-1) for p in ps]).reshape(np, size_ip)
+        eqs = numpy.asarray([fci.addons.des_a(vec_fci, norb, nelec, q).reshape(-1) for q in qs]).reshape(nq, size_ip)
 
         if is_mor:
-            omega_comp = omega_mor
+            nmor = len(omegas_mor)
+            omegas_mor = numpy.asarray(omegas_mor)
+            omegas_comps = omegas_mor
         else:
-            omega_comp = omega
+            omegas_comps = omegas
 
-        e_q = fci.addons.des_a(vec_fci, norb, nelec, q)
-        b_p = fci.addons.des_a(vec_fci, norb, nelec, p)
+        for ip, p in enumerate(ps):
+            b_p = bps[ip]
 
-        if is_mor:
-            x_vec = numpy.zeros_like(b_p, dtype=numpy.complex128)
+            if is_mor:
+                x_p = np.zeros((size_ip, nmor), dtype=numpy.complex128)
 
-        def h(v):
-            hv_re  = contract_1e(h1e, v.real, norb, nelec_ip, link_index=link_index_ip)
-            hv_re += contract_2e(h2e, v.real, norb, nelec_ip, link_index=link_index_ip)
-            hv_im  = contract_1e(h1e, v.imag, norb, nelec_ip, link_index=link_index_ip)
-            hv_im += contract_2e(h2e, v.imag, norb, nelec_ip, link_index=link_index_ip)
-            hv = hv_re + 1j * hv_im + (omega - ene_fci - 1j * eta) * v
-            return hv
+            for iomega, omega in enumerate(omegas_comps):
+                def h_ip_omega(v):
+                    assert v.shape == (size_ip, )
+                    for iv, v in enumerate(vs):
+                        hv_re  = contract_1e(h1e, v.real, norb, nelec_ip, link_index=link_index_ip)
+                        hv_re += contract_2e(h2e, v.real, norb, nelec_ip, link_index=link_index_ip)
+                        hv_im  = contract_1e(h1e, v.imag, norb, nelec_ip, link_index=link_index_ip)
+                        hv_im += contract_2e(h2e, v.imag, norb, nelec_ip, link_index=link_index_ip)
+                        hv = hv_re + 1j * hv_im + (omega - ene_fci - 1j * eta) * v
+                    return hv
+
+                hdiag_ip_omega = hdiag_ip + omega - ene_fci - 1j * eta
+                x = gmres(h_ip_omega, b=b_p, x0=b_p / hdiag_ip_omega, diag=hdiag_ip_omega, 
+                          tol=self.conv_tol, max_cycle=self.max_cycle)
+
+                if MOR:
+                    # Construct MOR subspace vectors
+                    X_vec[:,iomega] = sol
+                cput1 = logger.timer(self, 'EAGF GMRES orbital p = %d/%d, freq w = %d/%d (%d iterations)'%(
+                    ip+1,len(ps),iomega+1,len(omega_comp),solver.niter), *cput1)
+                x0 = sol
+                if not MOR:
+                    for iq, q in enumerate(qs):
+                        gfvals[iq,ip,iomega] = np.dot(e_vector[iq], sol)
+
+
 
         x0 = b_p / (diag_ip + omega - ene_fci - 1j * eta)
         x  = gmres(h, b=b_p, x0=x0, diag=(diag_ip + omega - ene_fci - 1j * eta), 
@@ -247,7 +234,7 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
         '''
         scf_obj = self._scf_obj
 
-        if self._fci_obj is None:
+        if not isinstance(self._fci_obj, _DirectSpin1FullConfigurationInteraction):
             self.build()
         fci_obj = self._fci_obj
 
@@ -281,17 +268,12 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
 
         h_ip  = fci.direct_spin1.pspace(h1e, h2e, norb, nelec_ip, hdiag=hdiag_ip, np=self.max_memory)[1]
         assert h_ip.shape == (size_ip, size_ip)
-        gf._h_ip = h_ip
 
         bps = numpy.asarray([fci.addons.des_a(vec_fci, norb, nelec, p).reshape(-1) for p in ps]).reshape(np, size_ip)
         eqs = numpy.asarray([fci.addons.des_a(vec_fci, norb, nelec, q).reshape(-1) for q in qs]).reshape(nq, size_ip)
-        gf._bps = bps
-        gf._eqs = eqs
-        gf._h_ip_omegas = []
 
         def gen_gfn(omega):
             h_ip_omega = h_ip + (omega - ene_fci - 1j * eta) * numpy.eye(size_ip)
-            gf._h_ip_omegas.append(numpy.linalg.inv(h_ip_omega))
             return numpy.einsum("pI,qJ,JI->qp", bps, eqs, numpy.linalg.inv(h_ip_omega))
 
         gfns_ip = numpy.asarray([gen_gfn(omega) for omega in omegas]).reshape(nomega, np, nq)
@@ -317,18 +299,18 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
                 Broadening factor for numerical stability.
 
         Returns:
-            gfvals : 3D array of complex floats, shape (nomega, np, nq)
+            gfns_ea : 3D array of complex floats, shape (nomega, np, nq)
                 The computed Green's function values.
         '''
         scf_obj = self._scf_obj
 
-        if self._fci_obj is None:
+        if not isinstance(self._fci_obj, _DirectSpin1FullConfigurationInteraction):
             self.build()
         fci_obj = self._fci_obj
 
         norb     = fci_obj.norb
         nelec    = fci_obj.nelec
-        nelec_ip = (nelec[0] + 1, nelec[1])
+        nelec_ea = (nelec[0] + 1, nelec[1])
 
         if ps is None:
             ps = numpy.arange(norb)
@@ -356,7 +338,6 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
 
         h_ea  = fci.direct_spin1.pspace(h1e, h2e, norb, nelec_ea, hdiag=hdiag_ea, np=self.max_memory)[1]
         assert h_ea.shape == (size_ea, size_ea)
-        gf._h_ea = h_ea
 
         bps = numpy.asarray([fci.addons.cre_a(vec_fci, norb, nelec, p).reshape(-1) for p in ps]).reshape(np, size_ea)
         eqs = numpy.asarray([fci.addons.cre_a(vec_fci, norb, nelec, q).reshape(-1) for q in qs]).reshape(nq, size_ea)
@@ -375,26 +356,46 @@ if __name__ == '__main__':
     mol = gto.M(
         atom = 'H 0 0 0; Li 0 0 1.1',
         basis = 'sto3g',
-        verbose = 5,
+        verbose = 0,
     )
     mf = scf.RHF(mol)
     mf.kernel()
     nmo = len(mf.mo_energy)
 
-    gf = FCIGF(mf)
+    gf = FCIGF(mf, tol=1e-8, verbose=0)
     gf.build()
 
     eta    = 0.01
     omegas = numpy.linspace(-0.5, 0.5, 201)
     ps = numpy.arange(nmo)
     qs = numpy.arange(nmo)
+
+    import fcdmft.solver.fcigf
+    gf._scf = gf._scf_obj
+    gf._fci = gf._fci_obj
+    gf.tol  = gf.conv_tol
+
     gf_ip     = gf.get_ip_slow(omegas, ps=ps, qs=qs, eta=eta)
-    gf_ip_ref = ipfci_mo_slow(gf, ps, qs, omegas, eta)
+    gf_ip_ref_1 = fcdmft.solver.fcigf.FCIGF.ipfci_mo_slow(gf, ps, qs, omegas, eta).transpose(2, 0, 1)
+    gf_ip_ref_2 = fcdmft.solver.fcigf.FCIGF.ipfci_mo(gf, ps, qs, omegas, eta).transpose(2, 1, 0)
+    err_1 = numpy.linalg.norm(gf_ip - gf_ip_ref_1)
+    err_2 = numpy.linalg.norm(gf_ip - gf_ip_ref_2)
+    print(f"IP GF difference = {err_1:6.4e}")
+    print(f"IP GF difference = {err_2:6.4e}")
 
-    for hinv1, hinv2 in zip(gf._h_ip_omegas, gf._H_fci_invs):
-        print(numpy.linalg.norm(hinv1 - hinv2))
-    assert 1 == 2
+    # gf_ea      = gf.get_ea_slow(omegas, ps=ps, qs=qs, eta=eta)
+    # gf_ea_ref  = fcdmft.solver.fcigf.FCIGF.eafci_mo_slow(gf, ps, qs, omegas, eta).transpose(2, 0, 1)
+    # gf_ea_diff = numpy.linalg.norm(gf_ea - gf_ea_ref)
+    # print(f"ea GF difference = {gf_ea_diff:6.4e}")
 
-    gf_ip_diff = numpy.linalg.norm(gf_ip - gf_ip_ref)
-    print(f"IP GF difference = {gf_ip_diff:6.4e}")
+    # for iomega, omega in enumerate(omegas):
+    #     print("")
+    #     print(f"omega = {omega:6.4f}")
+    #     print("IP:")
+    #     print_matrix(gf_ip[iomega].real)
+    #     print_matrix(gf_ip_ref[iomega].real)
+    #     print_matrix(gf_ip[iomega].imag)
+    #     print_matrix(gf_ip_ref[iomega].imag)
+
+
     

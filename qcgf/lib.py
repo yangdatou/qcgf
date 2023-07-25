@@ -9,10 +9,26 @@ from scipy.sparse.linalg import gcrotmk
 GMRES/GCROT(m,k) for solving Green's function linear equations
 '''
 
-def gmres(h: Union[Callable, numpy.ndarray], b: numpy.ndarray, 
-          x0: Optional[numpy.ndarray] = None,
-          diag: Optional[numpy.ndarray] = None, tol: float = 1e-3, 
-          max_cycle: int = 200, m: int = 30,
+OptionalArray = Optional[numpy.ndarray]
+
+def _unpack(v=None, vs=None):   
+    res = None
+
+    if v is not None and vs is None:
+        v   = numpy.asarray(v)
+        res = v.reshape(1, -1) if v.ndim == 1 else None
+    
+    if vs is not None and v is None:
+        vs  = numpy.asarray(vs)
+        res = vs if vs.ndim == 2 else vs.reshape(1, -1) if vs.ndim == 1 else None
+
+    return res
+
+def gmres(h: (Callable|numpy.ndarray), 
+          bs:  OptionalArray = None, b:  OptionalArray = None,
+          xs0: OptionalArray = None, x0: OptionalArray = None,
+          diag: OptionalArray = None,  
+          m: int = 30, tol: float = 1e-6, max_cycle: int = 200,
           stdout: typing.TextIO = sys.stdout) -> numpy.ndarray:
     """Implements the Generalized Minimum Residual (GMRES) method.
 
@@ -26,8 +42,8 @@ def gmres(h: Union[Callable, numpy.ndarray], b: numpy.ndarray,
         b: Vector or list of vectors.
 
     Kwargs:
-        x0 : 1D array
-            Initial guess
+        xs0 : 1D array
+            Initial guess.
         diag: 1D array
             Diagonal preconditioner.
         tol : float
@@ -36,33 +52,64 @@ def gmres(h: Union[Callable, numpy.ndarray], b: numpy.ndarray,
             max number of iterations.
 
     Returns:
-        x: Solution vector, ndarray like b.
+        xs: Solution vector, ndarray like b.
     """
-    b = numpy.asarray(b)
-    n = max(b.shape)
+    bs  = _unpack(b, bs)
+    x0s = _unpack(x0, xs0)
+    
+    assert bs is not None
+    nb, n = bs.shape
+    nnb   = nb * n
+
+    assert diag.shape == (n, )
+
     if callable(h):
-        hop  = LinearOperator((n, n), matvec=h)
+        def matvec(xs):
+            xs  = numpy.asarray(xs).reshape(nb, n)
+            hxs = numpy.asarray([h(x) for x in xs]).reshape(nb, n)
+            return hxs.reshape(nnb, )
+
+        hop = LinearOperator((nnb, nnb), matvec=matvec)
     else:
+        def matvec(xs):
+            xs  = numpy.asarray(xs).reshape(nb, n)
+            hxs = numpy.asarray([h.dot(x) for x in xs]).reshape(nb, n)
+            return hxs.reshape(nnb, )
+
         assert h.shape == (n, n)
-        hop = LinearOperator((n, n), matvec=(lambda x: numpy.dot(h, x)))
-    b    = b.reshape(-1)
-    x0   = x0.reshape(-1)
+        hop = LinearOperator((nnb, nnb), matvec=matvec)
 
     mop = None
     if diag is not None:
         diag = diag.reshape(-1)
-        mop  = LinearOperator((n, n), matvec=(lambda x: x / diag))
+        def matvec(xs):
+            xs  = numpy.asarray(xs).reshape(nb, n)
+            hxs = numpy.asarray([x / diag for x in xs]).reshape(nb, n)
+            return hxs.reshape(nnb, )
+        mop  = LinearOperator((nnb, nnb), matvec=matvec)
 
     num_iter = 0
     def callback(rk):
         nonlocal num_iter
         num_iter += 1
-        stdout.write(f"GMRES: iter = {num_iter:4d}, residual = {numpy.linalg.norm(rk):6.4e}\n")
+        stdout.write(f"GMRES: iter = {num_iter:4d}, residual = {numpy.linalg.norm(rk)/nb:6.4e}\n")
 
-    x, info = gcrotmk(hop, b, x0=x0, M=mop, maxiter=max_cycle, callback=callback, m=m, tol=tol, atol=tol)
-    x = x.reshape(-1)
+    stdout.write(f"\nGMRES Start\n")
+    stdout.write(f"GMRES: tol = {tol:6.4e}, max_cycle = {max_cycle:4d}, m = {m:4d}\n")
+    stdout.write(f"GMRES: iter = {num_iter:4d}, residual = {numpy.linalg.norm(hop(xs0))/nb:6.4e}\n")
+
+    xs, info = gcrotmk(
+        hop, bs.reshape(-1), x0=xs0.reshape(-1), M=mop, 
+        maxiter=max_cycle, callback=callback, m=m, 
+        tol=tol/nb, atol=tol/nb
+        )
 
     if info > 0:
         raise ValueError(f"Convergence to tolerance not achieved in {info} iterations")
 
-    return x
+    if nb == 1:
+        xs = xs.reshape(n, )
+    else:
+        xs = xs.reshape(nb, n)
+
+    return xs
