@@ -96,8 +96,9 @@ def gmres(h: (Callable|numpy.ndarray),
 
     stdout.write(f"\nGMRES Start\n")
     stdout.write(f"GMRES: tol = {tol:6.4e}, max_cycle = {max_cycle:4d}, m = {m:4d}\n")
-    stdout.write(f"GMRES: iter = {num_iter:4d}, residual = {numpy.linalg.norm(hop(xs0))/nb:6.4e}\n")
-
+    if xs0:
+        stdout.write(f"GMRES: initial residual = {numpy.linalg.norm(hop(xs0)-bs)/nb:6.4e}\n")
+        
     xs, info = gcrotmk(
         hop, bs.reshape(-1), x0=xs0.reshape(-1), M=mop, 
         maxiter=max_cycle, callback=callback, m=m, 

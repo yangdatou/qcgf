@@ -94,7 +94,7 @@ class TestGMRES(unittest.TestCase):
         xs0    = numpy.asarray(xs0)
         xs_ref = numpy.asarray(xs_ref)
 
-        xs_sol = gmres(lambda x: numpy.dot(a, x), bs, xs0=xs0, diag=diag, tol=1e-6, max_cycle=200, m=30)
+        xs_sol = gmres(lambda x: numpy.dot(a, x), bs, xs0=None, diag=diag, tol=1e-6, max_cycle=200, m=30)
         rs_sol = [numpy.dot(a, x) - b for x, b in zip(xs_sol, bs)]
 
         assert numpy.linalg.norm(xs_sol - xs_ref) < 1e-6
