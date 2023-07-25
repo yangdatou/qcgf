@@ -242,7 +242,7 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
                 Broadening factor for numerical stability.
 
         Returns:
-            gfvals : 3D array of complex floats
+            gfns_ip : 3D array of complex floats, shape (nomega, np, nq)
                 The computed Green's function values.
         '''
         scf_obj = self._scf_obj
@@ -296,6 +296,77 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
 
         gfns_ip = numpy.asarray([gen_gfn(omega) for omega in omegas]).reshape(nomega, np, nq)
         return gfns_ip
+
+
+    def get_ea_slow(self, omegas: List[float], ps: (List[int]|None)=None, qs: (List[int]|None)=None, eta: float=0.0) -> numpy.ndarray:
+        '''
+        Slow version of computing FCI EA Green's function by constructing 
+        the full FCI Hamiltonian. Note that the ene_fci does not include
+        the nuclear repulsion energy.
+
+        Parameters:
+            ps : list of ints, optional
+                Orbital indices used for computing the Green's function.
+                If not provided, all orbitals will be used.
+            qs : list of ints, optional
+                Orbital indices used for computing the Green's function.
+                If not provided, all orbitals will be used.
+            omegas : float
+                Frequency for which the Green's function is computed.
+            eta : float, optional
+                Broadening factor for numerical stability.
+
+        Returns:
+            gfvals : 3D array of complex floats, shape (nomega, np, nq)
+                The computed Green's function values.
+        '''
+        scf_obj = self._scf_obj
+
+        if self._fci_obj is None:
+            self.build()
+        fci_obj = self._fci_obj
+
+        norb     = fci_obj.norb
+        nelec    = fci_obj.nelec
+        nelec_ip = (nelec[0] + 1, nelec[1])
+
+        if ps is None:
+            ps = numpy.arange(norb)
+
+        if qs is None:
+            qs = numpy.arange(norb)
+
+        omegas = numpy.asarray(omegas)
+        nomega = len(omegas)
+        ps = numpy.asarray(ps)
+        qs = numpy.asarray(qs)
+        np = len(ps)
+        nq = len(qs)
+    
+        h1e     = fci_obj.h1e
+        h2e     = fci_obj.h2e
+        ene_fci = fci_obj.fci_ene
+        vec_fci = fci_obj.fci_vec
+        size    = vec_fci.size
+
+        link_index_ea = _unpack(norb, nelec_ea, None, spin=None)
+        size_ea  = link_index_ea[0].shape[0] * link_index_ea[1].shape[0]
+        hdiag_ea = fci_obj.make_hdiag(h1e, h2e, norb, nelec_ea)
+        assert hdiag_ea.shape == (size_ea, )
+
+        h_ea  = fci.direct_spin1.pspace(h1e, h2e, norb, nelec_ea, hdiag=hdiag_ea, np=self.max_memory)[1]
+        assert h_ea.shape == (size_ea, size_ea)
+        gf._h_ea = h_ea
+
+        bps = numpy.asarray([fci.addons.cre_a(vec_fci, norb, nelec, p).reshape(-1) for p in ps]).reshape(np, size_ea)
+        eqs = numpy.asarray([fci.addons.cre_a(vec_fci, norb, nelec, q).reshape(-1) for q in qs]).reshape(nq, size_ea)
+
+        def gen_gfn(omega):
+            h_ea_omega = - h_ea + (omega + ene_fci + 1j * eta) * numpy.eye(size_ea)
+            return numpy.einsum("pI,qJ,JI->qp", bps, eqs, numpy.linalg.inv(h_ea_omega))
+
+        gfns_ea = numpy.asarray([gen_gfn(omega) for omega in omegas]).reshape(nomega, np, nq)
+        return gfns_ea
 
 FCIGF = DirectSpin1FullConfigurationInteraction
 
