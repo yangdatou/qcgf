@@ -184,7 +184,7 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
 
                 return hv.reshape(size_ip, )
 
-            xps = gmres(h_ip_omega, b=bps, x0=bps / hdiag_ip_omega, diag=hdiag_ip_omega, 
+            xps = gmres(h_ip_omega, bs=bps, xs0=bps / hdiag_ip_omega, diag=hdiag_ip_omega, 
                         tol=self.conv_tol, max_cycle=self.max_cycle, m=self.gmres_m, 
                         verbose=self.verbose, stdout=self.stdout)
             xps = xps.reshape(np, size_ip)
