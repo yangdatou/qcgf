@@ -5,6 +5,8 @@ import numpy
 from scipy.sparse.linalg import LinearOperator
 from scipy.sparse.linalg import gcrotmk
 
+from pyscf.lib import logger
+
 '''
 GMRES/GCROT(m,k) for solving Green's function linear equations
 '''
@@ -29,8 +31,8 @@ def gmres(h: (Callable|numpy.ndarray),
           xs0: OptionalArray = None, x0: OptionalArray = None,
           diag: OptionalArray = None,  
           m: int = 30, tol: float = 1e-6, max_cycle: int = 200,
-          stdout: typing.TextIO = sys.stdout) -> numpy.ndarray:
-    """Implements the Generalized Minimum Residual (GMRES) method.
+          verbose = 0, stdout: typing.TextIO = sys.stdout) -> numpy.ndarray:
+    """Solve a matrix equation using flexible GCROT(m,k) algorithm.
 
     Solves the linear equation h x = b using GMRES. GMRES is an iterative method
     for the numerical solution of a nonsymmetric system of linear equations. The
@@ -54,6 +56,7 @@ def gmres(h: (Callable|numpy.ndarray),
     Returns:
         xs: Solution vector, ndarray like b.
     """
+    log = logger.Logger(stdout, verbose)
     bs  = _unpack(b, bs)
     x0s = _unpack(x0, xs0)
     
@@ -92,15 +95,17 @@ def gmres(h: (Callable|numpy.ndarray),
     def callback(rk):
         nonlocal num_iter
         num_iter += 1
-        stdout.write(f"GMRES: iter = {num_iter:4d}, residual = {numpy.linalg.norm(rk)/nb:6.4e}\n")
+        log.info(f"GMRES: iter = {num_iter:4d}, residual = {numpy.linalg.norm(rk)/nb:6.4e}")
 
-    stdout.write(f"\nGMRES Start\n")
-    stdout.write(f"GMRES: tol = {tol:6.4e}, max_cycle = {max_cycle:4d}, m = {m:4d}\n")
-    if xs0:
-        stdout.write(f"GMRES: initial residual = {numpy.linalg.norm(hop(xs0)-bs)/nb:6.4e}\n")
-        
+    log.info(f"\nGMRES Start")
+    log.info(f"GMRES: nb  = {nb:4d}, n = {n:4d},  m = {m:4d}")
+    log.info(f"GMRES: tol = {tol:4.2e}, max_cycle = {max_cycle:4d}")
+    
+    if xs0 is not None:
+        xs0 = xs0.reshape(-1)
+
     xs, info = gcrotmk(
-        hop, bs.reshape(-1), x0=xs0.reshape(-1), M=mop, 
+        hop, bs.reshape(-1), x0=xs0, M=mop, 
         maxiter=max_cycle, callback=callback, m=m, 
         tol=tol/nb, atol=tol/nb
         )

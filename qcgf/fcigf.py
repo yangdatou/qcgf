@@ -1,4 +1,3 @@
-import inspect, math
 import os, sys, typing
 from typing import List, Tuple, Callable
 
@@ -160,6 +159,9 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
         hdiag_ip = fci_obj.make_hdiag(h1e, h2e, norb, nelec_ip)
         assert hdiag_ip.shape == (size_ip, )
 
+        h_ip  = fci.direct_spin1.pspace(h1e, h2e, norb, nelec_ip, hdiag=hdiag_ip, np=self.max_memory)[1]
+        assert h_ip.shape == (size_ip, size_ip)
+
         bps = numpy.asarray([fci.addons.des_a(vec_fci, norb, nelec, p).reshape(-1) for p in ps]).reshape(np, size_ip)
         eqs = numpy.asarray([fci.addons.des_a(vec_fci, norb, nelec, q).reshape(-1) for q in qs]).reshape(nq, size_ip)
 
@@ -170,45 +172,41 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
         else:
             omegas_comps = omegas
 
+        gfns_ip = numpy.zeros((nomega, np, nq), dtype=numpy.complex128)
+
         for ip, p in enumerate(ps):
             b_p = bps[ip]
 
-            if is_mor:
-                x_p = np.zeros((size_ip, nmor), dtype=numpy.complex128)
-
             for iomega, omega in enumerate(omegas_comps):
+
                 def h_ip_omega(v):
                     assert v.shape == (size_ip, )
-                    for iv, v in enumerate(vs):
-                        hv_re  = contract_1e(h1e, v.real, norb, nelec_ip, link_index=link_index_ip)
-                        hv_re += contract_2e(h2e, v.real, norb, nelec_ip, link_index=link_index_ip)
-                        hv_im  = contract_1e(h1e, v.imag, norb, nelec_ip, link_index=link_index_ip)
-                        hv_im += contract_2e(h2e, v.imag, norb, nelec_ip, link_index=link_index_ip)
-                        hv = hv_re + 1j * hv_im + (omega - ene_fci - 1j * eta) * v
+                    hv_re  = contract_1e(h1e, v.real, norb, nelec_ip, link_index=link_index_ip)
+                    hv_re += contract_2e(h2e, v.real, norb, nelec_ip, link_index=link_index_ip)
+                    hv_im  = contract_1e(h1e, v.imag, norb, nelec_ip, link_index=link_index_ip)
+                    hv_im += contract_2e(h2e, v.imag, norb, nelec_ip, link_index=link_index_ip)
+                    hv = hv_re + 1j * hv_im + (omega - ene_fci - 1j * eta) * v
                     return hv
 
                 hdiag_ip_omega = hdiag_ip + omega - ene_fci - 1j * eta
-                x = gmres(h_ip_omega, b=b_p, x0=b_p / hdiag_ip_omega, diag=hdiag_ip_omega, 
-                          tol=self.conv_tol, max_cycle=self.max_cycle)
+                x_p = gmres(h_ip_omega, b=b_p, x0=b_p / hdiag_ip_omega, diag=hdiag_ip_omega, 
+                            tol=self.conv_tol, max_cycle=self.max_cycle, m=self.gmres_m, 
+                            verbose=self.verbose, stdout=self.stdout)
+                x_p = x_p.reshape(-1)
 
-                if MOR:
-                    # Construct MOR subspace vectors
-                    X_vec[:,iomega] = sol
-                cput1 = logger.timer(self, 'EAGF GMRES orbital p = %d/%d, freq w = %d/%d (%d iterations)'%(
-                    ip+1,len(ps),iomega+1,len(omega_comp),solver.niter), *cput1)
-                x0 = sol
-                if not MOR:
-                    for iq, q in enumerate(qs):
-                        gfvals[iq,ip,iomega] = np.dot(e_vector[iq], sol)
+                h_ip_omega = h_ip + (omega - ene_fci - 1j * eta) * numpy.eye(size_ip)
+                x_p_ref    = numpy.linalg.solve(h_ip_omega, b_p)
 
+                print(f"omega = {omega:6.4f}")
+                print(f"ip = {ip}")
+                err = numpy.linalg.norm(x_p - x_p_ref)
+                print(f"err = {err:6.4e}")
 
-
-        x0 = b_p / (diag_ip + omega - ene_fci - 1j * eta)
-        x  = gmres(h, b=b_p, x0=x0, diag=(diag_ip + omega - ene_fci - 1j * eta), 
-                   gmres_m=self.gmres_m, stdout=self.stdout,
-                   tol=self.conv_tol, max_cycle=self.max_cycle)
-
-        return None
+                for iq, q in enumerate(qs):
+                    e_q = eqs[iq]
+                    gfns_ip[iomega, ip, iq] = numpy.dot(e_q, x_p)
+        
+        return gfns_ip
 
     def get_ip_slow(self, omegas: List[float], ps: (List[int]|None)=None, qs: (List[int]|None)=None, eta: float=0.0) -> numpy.ndarray:
         '''
@@ -362,7 +360,7 @@ if __name__ == '__main__':
     mf.kernel()
     nmo = len(mf.mo_energy)
 
-    gf = FCIGF(mf, tol=1e-8, verbose=0)
+    gf = FCIGF(mf, tol=1e-8, verbose=4)
     gf.build()
 
     eta    = 0.01
@@ -375,11 +373,18 @@ if __name__ == '__main__':
     gf._fci = gf._fci_obj
     gf.tol  = gf.conv_tol
 
-    gf_ip     = gf.get_ip_slow(omegas, ps=ps, qs=qs, eta=eta)
+    gf_ip_1     = gf.get_ip_slow(omegas, ps=ps, qs=qs, eta=eta)
+    gf_ip_2     = gf.get_ip(omegas, ps=ps, qs=qs, eta=eta)
     gf_ip_ref_1 = fcdmft.solver.fcigf.FCIGF.ipfci_mo_slow(gf, ps, qs, omegas, eta).transpose(2, 0, 1)
     gf_ip_ref_2 = fcdmft.solver.fcigf.FCIGF.ipfci_mo(gf, ps, qs, omegas, eta).transpose(2, 1, 0)
-    err_1 = numpy.linalg.norm(gf_ip - gf_ip_ref_1)
-    err_2 = numpy.linalg.norm(gf_ip - gf_ip_ref_2)
+
+    err_1 = numpy.linalg.norm(gf_ip_1 - gf_ip_ref_1)
+    err_2 = numpy.linalg.norm(gf_ip_1 - gf_ip_ref_2)
+    print(f"IP GF difference = {err_1:6.4e}")
+    print(f"IP GF difference = {err_2:6.4e}")
+
+    err_1 = numpy.linalg.norm(gf_ip_2 - gf_ip_ref_1)
+    err_2 = numpy.linalg.norm(gf_ip_2 - gf_ip_ref_2)
     print(f"IP GF difference = {err_1:6.4e}")
     print(f"IP GF difference = {err_2:6.4e}")
 
@@ -392,10 +397,8 @@ if __name__ == '__main__':
     #     print("")
     #     print(f"omega = {omega:6.4f}")
     #     print("IP:")
-    #     print_matrix(gf_ip[iomega].real)
-    #     print_matrix(gf_ip_ref[iomega].real)
-    #     print_matrix(gf_ip[iomega].imag)
-    #     print_matrix(gf_ip_ref[iomega].imag)
+    #     print_matrix(gf_ip_1[iomega].real)
+    #     print_matrix(gf_ip_2[iomega].real)
 
 
     
