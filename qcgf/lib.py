@@ -13,7 +13,17 @@ GMRES/GCROT(m,k) for solving Green's function linear equations
 
 OptionalArray = Optional[numpy.ndarray]
 
-def _check_input_vectors(v=None, vs=None):
+def _check_input_vectors(v: OptionalArray = None, vs: OptionalArray = None) -> OptionalArray:
+    """
+    Check the input vectors to ensure they have the correct shape.
+
+    Args:
+        v (OptionalArray): The vector v.
+        vs (OptionalArray): The vector vs.
+
+    Returns:
+        OptionalArray: The reshaped vectors v or vs if they are 1D, otherwise None.
+    """
     res = None
 
     if v is not None and vs is None:
@@ -32,15 +42,17 @@ def gmres(h: Union[Callable, numpy.ndarray],
           diag: OptionalArray = None,  
           m: int = 30, tol: float = 1e-6, max_cycle: int = 200,
           verbose: int = 0, stdout: typing.TextIO = sys.stdout) -> numpy.ndarray:
-    """Solve a matrix equation using flexible GCROT(m,k) algorithm.
+    """
+    Solve a matrix equation using the flexible GCROT(m,k) algorithm.
 
-    Solves the linear equation h x = b using GMRES. GMRES is an iterative method
+    Solves the linear equation h @ x = b using GMRES. GMRES is an iterative method
     for the numerical solution of a nonsymmetric system of linear equations. The
     method approximates the solution by the vector in a Krylov subspace with minimal 
     residual.
 
     Args:
-        h (Callable|numpy.ndarray): Can be either a callable or a matrix. Used to initialize the LinearOperator.
+        h (Union[Callable, numpy.ndarray]): Can be either a callable or a matrix. Used to initialize the LinearOperator.
+        bs (OptionalArray): Vector or list of vectors.
         b (OptionalArray): Vector or list of vectors.
 
     Kwargs:
@@ -49,7 +61,7 @@ def gmres(h: Union[Callable, numpy.ndarray],
         diag (OptionalArray): 1D array
             Diagonal preconditioner.
         tol (float): Tolerance to terminate the operation aop(x).
-        max_cycle (int): max number of iterations.
+        max_cycle (int): Max number of iterations.
 
     Returns:
         numpy.ndarray: Solution vector, ndarray like b.
@@ -74,7 +86,7 @@ def gmres(h: Union[Callable, numpy.ndarray],
     else:
         def matvec(xs):
             xs = numpy.asarray(xs).reshape(nb, n)
-            hxs = numpy.asarray([h.dot(x) for x in xs]).reshape(nb, n)
+            hxs = numpy.asarray([h @ x for x in xs]).reshape(nb, n)
             return hxs.reshape(nnb, )
 
         assert h.shape == (n, n)
