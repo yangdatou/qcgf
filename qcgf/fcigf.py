@@ -190,7 +190,7 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
 
                 hdiag_ip_omega = hdiag_ip + omega - ene_fci - 1j * eta
                 x_p = gmres(h_ip_omega, b=b_p, x0=b_p / hdiag_ip_omega, diag=hdiag_ip_omega, 
-                            tol=self.conv_tol, max_cycle=self.max_cycle, m=self.gmres_m, 
+                            tol=1e-10, max_cycle=self.max_cycle, m=self.gmres_m, 
                             verbose=self.verbose, stdout=self.stdout)
                 x_p = x_p.reshape(-1)
 
