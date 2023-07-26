@@ -1,10 +1,10 @@
-import sys, os, typing
-from typing import Union, Optional, Callable, Tuple, List
-
+import sys
+import os
+import typing
 import numpy
+from typing import Union, Optional, Callable, Tuple, List
 from scipy.sparse.linalg import LinearOperator
 from scipy.sparse.linalg import gcrotmk
-
 from pyscf.lib import logger
 
 '''
@@ -13,25 +13,25 @@ GMRES/GCROT(m,k) for solving Green's function linear equations
 
 OptionalArray = Optional[numpy.ndarray]
 
-def _unpack(v=None, vs=None):   
+def _check_input_vectors(v=None, vs=None):
     res = None
 
     if v is not None and vs is None:
-        v   = numpy.asarray(v)
+        v = numpy.asarray(v)
         res = v.reshape(1, -1) if v.ndim == 1 else None
-    
+
     if vs is not None and v is None:
-        vs  = numpy.asarray(vs)
+        vs = numpy.asarray(vs)
         res = vs if vs.ndim == 2 else vs.reshape(1, -1) if vs.ndim == 1 else None
 
     return res
 
-def gmres(h: (Callable|numpy.ndarray), 
-          bs:  OptionalArray = None, b:  OptionalArray = None,
+def gmres(h: Union[Callable, numpy.ndarray], 
+          bs: OptionalArray = None, b: OptionalArray = None,
           xs0: OptionalArray = None, x0: OptionalArray = None,
           diag: OptionalArray = None,  
           m: int = 30, tol: float = 1e-6, max_cycle: int = 200,
-          verbose = 0, stdout: typing.TextIO = sys.stdout) -> numpy.ndarray:
+          verbose: int = 0, stdout: typing.TextIO = sys.stdout) -> numpy.ndarray:
     """Solve a matrix equation using flexible GCROT(m,k) algorithm.
 
     Solves the linear equation h x = b using GMRES. GMRES is an iterative method
@@ -40,42 +40,40 @@ def gmres(h: (Callable|numpy.ndarray),
     residual.
 
     Args:
-        h: can be either a callable or a matrix. Used to initialize the LinearOperator.
-        b: Vector or list of vectors.
+        h (Callable|numpy.ndarray): Can be either a callable or a matrix. Used to initialize the LinearOperator.
+        b (OptionalArray): Vector or list of vectors.
 
     Kwargs:
-        xs0 : 1D array
+        xs0 (OptionalArray): 1D array
             Initial guess.
-        diag: 1D array
+        diag (OptionalArray): 1D array
             Diagonal preconditioner.
-        tol : float
-            Tolerance to terminate the operation aop(x).
-        max_cycle : int
-            max number of iterations.
+        tol (float): Tolerance to terminate the operation aop(x).
+        max_cycle (int): max number of iterations.
 
     Returns:
-        xs: Solution vector, ndarray like b.
+        numpy.ndarray: Solution vector, ndarray like b.
     """
     log = logger.Logger(stdout, verbose)
-    bs  = _unpack(b, bs)
-    x0s = _unpack(x0, xs0)
+    bs = _check_input_vectors(b, bs)
+    x0s = _check_input_vectors(x0, xs0)
     
     assert bs is not None
     nb, n = bs.shape
-    nnb   = nb * n
+    nnb = nb * n
 
     assert diag.shape == (n, )
 
     if callable(h):
         def matvec(xs):
-            xs  = numpy.asarray(xs).reshape(nb, n)
+            xs = numpy.asarray(xs).reshape(nb, n)
             hxs = numpy.asarray([h(x) for x in xs]).reshape(nb, n)
             return hxs.reshape(nnb, )
 
         hop = LinearOperator((nnb, nnb), matvec=matvec)
     else:
         def matvec(xs):
-            xs  = numpy.asarray(xs).reshape(nb, n)
+            xs = numpy.asarray(xs).reshape(nb, n)
             hxs = numpy.asarray([h.dot(x) for x in xs]).reshape(nb, n)
             return hxs.reshape(nnb, )
 
@@ -86,10 +84,10 @@ def gmres(h: (Callable|numpy.ndarray),
     if diag is not None:
         diag = diag.reshape(-1)
         def matvec(xs):
-            xs  = numpy.asarray(xs).reshape(nb, n)
+            xs = numpy.asarray(xs).reshape(nb, n)
             hxs = numpy.asarray([x / diag for x in xs]).reshape(nb, n)
             return hxs.reshape(nnb, )
-        mop  = LinearOperator((nnb, nnb), matvec=matvec)
+        mop = LinearOperator((nnb, nnb), matvec=matvec)
 
     num_iter = 0
     def callback(rk):
