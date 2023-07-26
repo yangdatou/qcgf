@@ -499,45 +499,12 @@ if __name__ == "__main__":
     eta    = 0.01
     omegas = numpy.linspace(-0.5, 0.5, 201)
     ps = [0, 1, 2]
-    qs = [0, 1, 2]
-
-    import fcdmft.solver.fcigf
-    gf._scf = gf._scf_obj
-    gf._fci = gf._fci_obj
-    gf.tol  = gf.conv_tol
-
-    so = lib.StreamObject()
-    so.verbose = 5
-    so.stdout  = sys.stdout
+    qs = [0, 1, 2, 3, 4]
 
     gf_ip_1     = gf.get_ip_slow(omegas, ps=ps, qs=qs, eta=eta)
     gf_ip_2     = gf.get_ip(omegas, ps=ps, qs=qs, eta=eta)
-
-    err_1 = numpy.linalg.norm(gf_ip_1 - gf_ip_ref_1)
-    err_2 = numpy.linalg.norm(gf_ip_1 - gf_ip_ref_2)
-    assert err_1 < 1e-6
-    assert err_2 < 1e-6
-
-    err_1 = numpy.linalg.norm(gf_ip_2 - gf_ip_ref_1)
-    err_2 = numpy.linalg.norm(gf_ip_2 - gf_ip_ref_2)
-    assert err_1 < 1e-6
-    assert err_2 < 1e-6
+    assert numpy.linalg.norm(gf_ip_1 - gf_ip_2) < 1e-6
 
     gf_ea_1     = gf.get_ea_slow(omegas, ps=ps, qs=qs, eta=eta)
-    cpu1 = lib.logger.timer(so, 'gf.get_ea_slow', *cpu0)
     gf_ea_2     = gf.get_ea(omegas, ps=ps, qs=qs, eta=eta)
-    cpu1 = lib.logger.timer(so, 'gf.get_ea', *cpu1)
-    gf_ea_ref_1 = fcdmft.solver.fcigf.FCIGF.eafci_mo_slow(gf, ps, qs, omegas, eta).transpose(2, 0, 1)
-    cpu1 = lib.logger.timer(so, 'fcdmft.solver.fcigf.FCIGF.eafci_mo_slow', *cpu1)
-    gf_ea_ref_2 = fcdmft.solver.fcigf.FCIGF.eafci_mo(gf, ps, qs, omegas, eta).transpose(2, 1, 0)
-    cpu1 = lib.logger.timer(so, 'fcdmft.solver.fcigf.FCIGF.eafci_mo', *cpu1)
-
-    err_1 = numpy.linalg.norm(gf_ea_1 - gf_ea_ref_1)
-    err_2 = numpy.linalg.norm(gf_ea_1 - gf_ea_ref_2)
-    print(f"EA GF difference = {err_1:6.4e}")
-    print(f"EA GF difference = {err_2:6.4e}")
-
-    err_1 = numpy.linalg.norm(gf_ea_2 - gf_ea_ref_1)
-    err_2 = numpy.linalg.norm(gf_ea_2 - gf_ea_ref_2)
-    print(f"EA GF difference = {err_1:6.4e}")
-    print(f"EA GF difference = {err_2:6.4e}")
+    assert numpy.linalg.norm(gf_ea_1 - gf_ea_2) < 1e-6
