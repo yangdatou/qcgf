@@ -95,11 +95,11 @@ def gmres(h: (Callable|numpy.ndarray),
     def callback(rk):
         nonlocal num_iter
         num_iter += 1
-        log.info(f"GMRES: iter = {num_iter:4d}, residual = {numpy.linalg.norm(rk)/nb:6.4e}")
+        log.debug(f"GMRES: iter = {num_iter:4d}, residual = {numpy.linalg.norm(rk)/nb:6.4e}")
 
-    log.info(f"\nGMRES Start")
-    log.info(f"GMRES: nb  = {nb:4d}, n = {n:4d},  m = {m:4d}")
-    log.info(f"GMRES: tol = {tol:4.2e}, max_cycle = {max_cycle:4d}")
+    log.debug(f"\nGMRES Start")
+    log.debug(f"GMRES: nb  = {nb:4d}, n = {n:4d},  m = {m:4d}")
+    log.debug(f"GMRES: tol = {tol:4.2e}, max_cycle = {max_cycle:4d}")
     
     if xs0 is not None:
         xs0 = xs0.reshape(-1)

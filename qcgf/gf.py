@@ -16,22 +16,13 @@ class GreensFunctionMixin(lib.StreamObject):
             max number of iterations.  If max_cycle <= 0, SCF iteration will
             be skiped and the kernel function will compute only the total
             energy based on the intial guess. Default value is 50.
-
-    Saved results:
-        converged : bool
-            SCF converged or not
-        e_tot : float
-            Total HF energy (electronic energy plus nuclear repulsion)
-        mo_energy :
-            Orbital energies
-        mo_occ
-            Orbital occupancy
-        mo_coeff
-            Orbital coefficients
+        gmres_m : int
+            m used in GMRES method.
     '''
+    verbose    = getattr(__config__, 'gf_verbose',  4)
+    max_memory = getattr(__config__, 'gf_max_memory', 40000)  # 2 GB
     conv_tol   = getattr(__config__, 'gf_conv_tol', 1e-6)
     max_cycle  = getattr(__config__, 'gf_max_cycle', 50)
-    max_memory = getattr(__config__, 'gf_max_memory', 2000)  # 2 GB
     gmres_m    = getattr(__config__, 'gf_gmres_m', 30)
 
 GF = GreensFunctionMixin
