@@ -148,7 +148,6 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
         np = len(ps)
         nq = len(qs)
     
-        
         ene_fci = fci_obj.fci_ene
         vec_fci = fci_obj.fci_vec
         size    = vec_fci.size
@@ -160,13 +159,9 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
         hdiag_ip = fci_obj.make_hdiag(fci_obj.h1e, fci_obj.h2e, norb, nelec_ip)
         assert hdiag_ip.shape == (size_ip, )
 
-        h2e   = fci_obj.absorb_h1e(fci_obj.h1e, fci_obj.h2e, norb, nelec_ip, 0.5)
-
-        h_ip  = fci.direct_spin1.pspace(fci_obj.h1e, fci_obj.h2e, norb, nelec_ip, hdiag=hdiag_ip, np=self.max_memory)[1]
-        assert h_ip.shape == (size_ip, size_ip)
-
-        bps = numpy.asarray([fci.addons.des_a(vec_fci, norb, nelec, p).reshape(-1) for p in ps]).reshape(np, size_ip)
-        eqs = numpy.asarray([fci.addons.des_a(vec_fci, norb, nelec, q).reshape(-1) for q in qs]).reshape(nq, size_ip)
+        h2e_ip = fci_obj.absorb_h1e(fci_obj.h1e, fci_obj.h2e, norb, nelec_ip, 0.5)
+        bps    = numpy.asarray([fci.addons.des_a(vec_fci, norb, nelec, p).reshape(-1) for p in ps]).reshape(np, size_ip)
+        eqs    = numpy.asarray([fci.addons.des_a(vec_fci, norb, nelec, q).reshape(-1) for q in qs]).reshape(nq, size_ip)
 
         if is_mor:
             nmor = len(omegas_mor)
@@ -184,38 +179,20 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
 
                 def h_ip_omega(v):
                     assert v.shape == (size_ip, )
-                    v   = v.reshape(na_ip, nb_ip)
-                    hv  = contract_2e(h2e, v, norb, nelec_ip, link_index=link_index_ip)
-                    # hv_re  = contract_1e(h1e, v.real, norb, nelec_ip, link_index=link_index_ip)
-                    # hv_re += contract_2e(h2e, v.real, norb, nelec_ip, link_index=link_index_ip)
-                    # hv_im  = contract_1e(h1e, v.imag, norb, nelec_ip, link_index=link_index_ip)
-                    # hv_im += contract_2e(h2e, v.imag, norb, nelec_ip, link_index=link_index_ip)
-                    # hv = hv_re + 1j * hv_im # + (omega - ene_fci - 1j * eta) * v
-                    return hv
+                    v        = v.reshape(na_ip, nb_ip)
+                    hv_real  = contract_2e(h2e_ip, v.real, norb, nelec_ip, link_index=link_index_ip)
+                    hv_imag  = contract_2e(h2e_ip, v.imag, norb, nelec_ip, link_index=link_index_ip)
 
-                # hdiag_ip_omega = hdiag_ip + omega - ene_fci - 1j * eta
-                # x_p = gmres(h_ip_omega, b=b_p, x0=b_p / hdiag_ip_omega, diag=hdiag_ip_omega, 
-                #             tol=1e-10, max_cycle=self.max_cycle, m=self.gmres_m, 
-                #             verbose=self.verbose, stdout=self.stdout)
-                # x_p = x_p.reshape(-1)
+                    hv  = hv_real + 1j * hv_imag 
+                    hv += (omega - ene_fci - 1j * eta) * v
 
-                xx = numpy.eye(size_ip)
-                h_ip_omega_ = numpy.asarray([h_ip_omega(xx[:, i]) for i in range(size_ip)]).reshape(size_ip, size_ip)
-                h_ip_omega  = h_ip # + numpy.eye(size_ip) * (omega - ene_fci - 1j * eta)
+                    return hv.reshape(size_ip, )
 
-                print("h_ip_omega from FCI:")
-                print_matrix(h_ip_omega[:10, :10])
-
-                print("h_ip_omega from GMRES:")
-                print_matrix(h_ip_omega_[:10, :10])
-                assert 1 == 2
-
-                x_p_ref    = numpy.linalg.solve(h_ip_omega, b_p)
-
-                print(f"omega = {omega:6.4f}")
-                print(f"ip = {ip}")
-                err = numpy.linalg.norm(hx_p - hx_p_ref)
-                print(f"err = {err:6.4e}")
+                hdiag_ip_omega = hdiag_ip + omega - ene_fci - 1j * eta
+                x_p = gmres(h_ip_omega, b=b_p, x0=b_p / hdiag_ip_omega, diag=hdiag_ip_omega, 
+                            tol=1e-10, max_cycle=self.max_cycle, m=self.gmres_m, 
+                            verbose=self.verbose, stdout=self.stdout)
+                x_p = x_p.reshape(-1)
 
                 for iq, q in enumerate(qs):
                     e_q = eqs[iq]
