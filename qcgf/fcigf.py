@@ -170,34 +170,27 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
         else:
             omegas_comps = omegas
 
-        gfns_ip = numpy.zeros((nomega, np, nq), dtype=numpy.complex128)
+        def gen_gfn(omega):
+            hdiag_ip_omega = hdiag_ip + omega - ene_fci - 1j * eta
 
-        for ip, p in enumerate(ps):
-            b_p = bps[ip]
+            def h_ip_omega(v):
+                assert v.shape == (size_ip, )
+                v        = v.reshape(na_ip, nb_ip)
+                hv_real  = contract_2e(h2e_ip, v.real, norb, nelec_ip, link_index=link_index_ip)
+                hv_imag  = contract_2e(h2e_ip, v.imag, norb, nelec_ip, link_index=link_index_ip)
 
-            for iomega, omega in enumerate(omegas_comps):
+                hv  = hv_real + 1j * hv_imag 
+                hv += (omega - ene_fci - 1j * eta) * v
 
-                def h_ip_omega(v):
-                    assert v.shape == (size_ip, )
-                    v        = v.reshape(na_ip, nb_ip)
-                    hv_real  = contract_2e(h2e_ip, v.real, norb, nelec_ip, link_index=link_index_ip)
-                    hv_imag  = contract_2e(h2e_ip, v.imag, norb, nelec_ip, link_index=link_index_ip)
+                return hv.reshape(size_ip, )
 
-                    hv  = hv_real + 1j * hv_imag 
-                    hv += (omega - ene_fci - 1j * eta) * v
+            xps = gmres(h_ip_omega, b=bps, x0=bps / hdiag_ip_omega, diag=hdiag_ip_omega, 
+                        tol=self.conv_tol, max_cycle=self.max_cycle, m=self.gmres_m, 
+                        verbose=self.verbose, stdout=self.stdout)
+            xps = xps.reshape(np, size_ip)
+            return numpy.einsum("pI,qI->pq", xps, eqs)
 
-                    return hv.reshape(size_ip, )
-
-                hdiag_ip_omega = hdiag_ip + omega - ene_fci - 1j * eta
-                x_p = gmres(h_ip_omega, b=b_p, x0=b_p / hdiag_ip_omega, diag=hdiag_ip_omega, 
-                            tol=1e-10, max_cycle=self.max_cycle, m=self.gmres_m, 
-                            verbose=self.verbose, stdout=self.stdout)
-                x_p = x_p.reshape(-1)
-
-                for iq, q in enumerate(qs):
-                    e_q = eqs[iq]
-                    gfns_ip[iomega, ip, iq] = numpy.dot(e_q, x_p)
-        
+        gfns_ip = numpy.asarray([gen_gfn(omega) for omega in omegas]).reshape(nomega, np, nq)
         return gfns_ip
 
     def get_ip_slow(self, omegas: List[float], ps: (List[int]|None)=None, qs: (List[int]|None)=None, eta: float=0.0) -> numpy.ndarray:
