@@ -25,4 +25,51 @@ class GreensFunctionMixin(lib.StreamObject):
     max_cycle  = getattr(__config__, 'gf_max_cycle', 50)
     gmres_m    = getattr(__config__, 'gf_gmres_m', 30)
 
+    nelec = None
+    norb  = None
+
+    def __init__(self, scf_obj: scf.hf.SCF = None, tol=1e-8, verbose=0) -> None:
+        """
+        Initialize the DirectSpin1FullConfigurationInteraction solver.
+
+        Parameters:
+            scf_obj : SCF class object, optional
+                The SCF object used for the mean-field calculations.
+            tol : float, optional
+                Tolerance for numerical computations.
+            verbose : int, optional
+                Verbosity level (0, 1, 2, 3, 4).
+
+        Attributes:
+            _cc_obj : FCI class object
+                The FCI object used for FCI calculations.
+            scf_obj : SCF class object
+                The SCF object used for the mean-field calculations.
+            tol : float
+                Tolerance for numerical computations.
+            verbose : int
+                Verbosity level (0, 1, 2, 3, 4).
+            stdout : file
+                File object to which log messages will be written.
+        """
+        
+        self._scf_obj = scf_obj  # Fix typo: mf -> scf_obj
+        self.conv_tol   = tol
+        self.verbose    = verbose
+        self._mol_obj   = scf_obj.mol
+        self.stdout     = scf_obj.stdout
+        self.max_memory = scf_obj.max_memory
+
+    def build(self):
+        raise NotImplementedError
+
+    def get_ip(self):
+        raise NotImplementedError
+
+    def get_ea(self):
+        raise NotImplementedError
+
+    def kernel(self):
+        raise NotImplementedError
+
 GF = GreensFunctionMixin

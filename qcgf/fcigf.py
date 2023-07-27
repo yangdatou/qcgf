@@ -463,7 +463,7 @@ class DirectSpin1FullConfigurationInteraction(GreensFunctionMixin):
 
         # h2e_ea = fci_obj.absorb_h1e(h1e, eri, norb, nelec_ea, fac=0.5)
         if size_ea * size_ea * 8 / 1024**3 > self.max_memory:
-            raise ValueError("Not enough memory for FCI ea Hamiltonian.")
+            raise ValueError("Not enough memory for FCI EA Hamiltonian.")
         h_ea   = fci.direct_spin1.pspace(h1e, eri, norb, nelec_ea, hdiag=hdiag_ea, np=size_ea)[1]
         assert h_ea.shape == (size_ea, size_ea)
 
