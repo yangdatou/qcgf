@@ -69,6 +69,24 @@ class GreensFunctionMixin(lib.StreamObject):
     def get_ea(self):
         raise NotImplementedError
 
+    def get_rhs_ip(self, orb_list=None, verbose=None):
+        raise NotImplementedError
+
+    def get_rhs_ea(self, orb_list=None, verbose=None):
+        raise NotImplementedError
+
+    def get_lag_ip(self, orb_list=None, verbose=None):
+        raise NotImplementedError
+
+    def get_lag_ea(self, orb_list=None, verbose=None):
+        raise NotImplementedError
+
+    def gen_hop_ip(self, orb_list=None, verbose=None):
+        raise NotImplementedError
+
+    def gen_hop_ea(self, orb_list=None, verbose=None):
+        raise NotImplementedError
+
     def kernel(self):
         raise NotImplementedError
 
